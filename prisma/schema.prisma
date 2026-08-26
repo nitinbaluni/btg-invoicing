@@ -1,0 +1,264 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id              String       @id @default(uuid())
+  name            String
+  email           String       @unique
+  passwordHash    String
+  role            Role         @default(SALES)
+  isActive        Boolean      @default(true)
+  lastLoginAt     DateTime?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  attachments     Attachment[]
+  auditLogs       AuditLog[]
+  expensesCreated Expense[]    @relation("ExpenseCreatedBy")
+  invoicesCreated Invoice[]    @relation("InvoiceCreatedBy")
+  paymentsCreated Payment[]    @relation("PaymentCreatedBy")
+
+  @@map("users")
+}
+
+model Customer {
+  id             String    @id @default(uuid())
+  name           String
+  billingEmail   String?
+  phone          String?
+  gstin          String?
+  billingAddress String?
+  state          String
+  stateCode      String
+  isActive       Boolean   @default(true)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  invoices       Invoice[]
+  payments       Payment[]
+
+  @@map("customers")
+}
+
+model Invoice {
+  id                 String              @id @default(uuid())
+  invoiceNumber      String              @unique
+  customerId         String
+  invoiceDate        DateTime
+  dueDate            DateTime
+  placeOfSupply      String
+  isInterstate       Boolean
+  subtotal           Decimal             @db.Decimal(12, 2)
+  cgstTotal          Decimal             @default(0) @db.Decimal(12, 2)
+  sgstTotal          Decimal             @default(0) @db.Decimal(12, 2)
+  igstTotal          Decimal             @default(0) @db.Decimal(12, 2)
+  grandTotal         Decimal             @db.Decimal(12, 2)
+  amountPaid         Decimal             @default(0) @db.Decimal(12, 2)
+  outstandingAmount  Decimal             @db.Decimal(12, 2)
+  status             InvoiceStatus       @default(DRAFT)
+  notes              String?
+  terms              String?
+  createdById        String
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  items              InvoiceItem[]
+  createdBy          User                @relation("InvoiceCreatedBy", fields: [createdById], references: [id])
+  customer           Customer            @relation(fields: [customerId], references: [id])
+  paymentAllocations PaymentAllocation[]
+  reminderLogs       ReminderLog[]
+
+  @@index([customerId])
+  @@index([status])
+  @@index([dueDate])
+  @@map("invoices")
+}
+
+model InvoiceItem {
+  id          String  @id @default(uuid())
+  invoiceId   String
+  description String
+  hsnSacCode  String
+  quantity    Decimal @db.Decimal(12, 2)
+  unitPrice   Decimal @db.Decimal(12, 2)
+  gstRate     Decimal @db.Decimal(5, 2)
+  cgstAmount  Decimal @default(0) @db.Decimal(12, 2)
+  sgstAmount  Decimal @default(0) @db.Decimal(12, 2)
+  igstAmount  Decimal @default(0) @db.Decimal(12, 2)
+  lineTotal   Decimal @db.Decimal(12, 2)
+  sortOrder   Int     @default(0)
+  invoice     Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@map("invoice_items")
+}
+
+model Payment {
+  id              String              @id @default(uuid())
+  customerId      String
+  amount          Decimal             @db.Decimal(12, 2)
+  paymentDate     DateTime
+  method          PaymentMethod
+  referenceNumber String?
+  notes           String?
+  createdById     String
+  createdAt       DateTime            @default(now())
+  allocations     PaymentAllocation[]
+  createdBy       User                @relation("PaymentCreatedBy", fields: [createdById], references: [id])
+  customer        Customer            @relation(fields: [customerId], references: [id])
+
+  @@index([customerId])
+  @@map("payments")
+}
+
+model PaymentAllocation {
+  id              String   @id @default(uuid())
+  paymentId       String
+  invoiceId       String
+  allocatedAmount Decimal  @db.Decimal(12, 2)
+  createdAt       DateTime @default(now())
+  invoice         Invoice  @relation(fields: [invoiceId], references: [id])
+  payment         Payment  @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  @@index([paymentId])
+  @@index([invoiceId])
+  @@map("payment_allocations")
+}
+
+model ExpenseCategory {
+  id       String    @id @default(uuid())
+  name     String    @unique
+  isActive Boolean   @default(true)
+  expenses Expense[]
+
+  @@map("expense_categories")
+}
+
+model Expense {
+  id            String          @id @default(uuid())
+  categoryId    String
+  amount        Decimal         @db.Decimal(12, 2)
+  expenseDate   DateTime
+  vendorName    String?
+  description   String?
+  paymentMethod PaymentMethod
+  createdById   String
+  createdAt     DateTime        @default(now())
+  attachments   Attachment[]
+  category      ExpenseCategory @relation(fields: [categoryId], references: [id])
+  createdBy     User            @relation("ExpenseCreatedBy", fields: [createdById], references: [id])
+
+  @@index([categoryId])
+  @@index([expenseDate])
+  @@map("expenses")
+}
+
+model Reminder {
+  id              String          @id @default(uuid())
+  name            String
+  triggerType     ReminderTrigger
+  offsetDays      Int
+  channel         String          @default("email")
+  templateSubject String
+  templateBody    String
+  isActive        Boolean         @default(true)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  logs            ReminderLog[]
+
+  @@map("reminders")
+}
+
+model ReminderLog {
+  id           String         @id @default(uuid())
+  reminderId   String
+  invoiceId    String
+  sentAt       DateTime       @default(now())
+  sentDate     String
+  status       ReminderStatus
+  errorMessage String?
+  invoice      Invoice        @relation(fields: [invoiceId], references: [id])
+  reminder     Reminder       @relation(fields: [reminderId], references: [id])
+
+  @@unique([reminderId, invoiceId, sentDate])
+  @@map("reminder_logs")
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  userId     String?
+  action     String
+  entityType String
+  entityId   String
+  changes    Json?
+  ipAddress  String?
+  createdAt  DateTime @default(now())
+  user       User?    @relation(fields: [userId], references: [id])
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+model Attachment {
+  id           String   @id @default(uuid())
+  entityType   String
+  entityId     String
+  filePath     String
+  fileName     String
+  mimeType     String
+  sizeBytes    Int
+  uploadedById String
+  createdAt    DateTime @default(now())
+  expenseId    String?
+  expense      Expense? @relation(fields: [expenseId], references: [id])
+  uploadedBy   User     @relation(fields: [uploadedById], references: [id])
+
+  @@index([entityType, entityId])
+  @@map("attachments")
+}
+
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+
+  @@map("settings")
+}
+
+enum Role {
+  ADMIN
+  FINANCE
+  SALES
+}
+
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  PARTIALLY_PAID
+  PAID
+  OVERDUE
+  VOID
+}
+
+enum PaymentMethod {
+  BANK_TRANSFER
+  UPI
+  CHEQUE
+  CASH
+  CARD
+  OTHER
+}
+
+enum ReminderTrigger {
+  BEFORE_DUE
+  ON_DUE
+  AFTER_DUE
+}
+
+enum ReminderStatus {
+  SENT
+  FAILED
+}
